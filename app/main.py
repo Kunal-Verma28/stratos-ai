@@ -25,6 +25,7 @@ from app.core.coordinate_mapper import CoordinateMapper
 from app.gestures.recognizer import GestureRecognizer
 from app.gestures.gesture_types import GestureState, ActionType, GestureEvent
 from app.controller.mouse_controller import MouseController
+from app.controller.keyboard_controller import KeyboardController
 from app.controller.system_controller import SystemController
 from app.ui.main_window import MainWindow
 from app.ui.hud_overlay import HUDOverlay
@@ -57,8 +58,10 @@ class VisionWorker(QObject):
         self._mapper    = CoordinateMapper(cfg)
         self._recognizer= GestureRecognizer(cfg)
         self._mouse     = MouseController()
+        self._keyboard  = KeyboardController()
         self._system    = SystemController()
-        self.camera     = self._camera   # expose for UI preview
+        self.camera     = self._camera       # expose for UI preview
+        self.recognizer = self._recognizer   # expose for live calibration telemetry
 
     def start_pipeline(self):
         """Called from UI thread → starts camera then runs the vision loop in a thread."""
@@ -165,6 +168,15 @@ class VisionWorker(QObject):
         elif a == ActionType.SCROLL_DOWN:
             self._mouse.scroll(event.delta)
 
+        elif a == ActionType.NEXT_SLIDE:
+            self._keyboard.next_slide()
+
+        elif a == ActionType.PREV_SLIDE:
+            self._keyboard.prev_slide()
+
+        elif a == ActionType.CUSTOM_HOTKEY:
+            self._keyboard.dispatch_custom(event.custom_key)
+
         elif a == ActionType.SCREENSHOT:
             self._system.screenshot()
 
@@ -207,7 +219,7 @@ def main():
     # ── UI Components ─────────────────────────────────────────────────────────
     hud    = HUDOverlay(opacity=cfg.hud_opacity)
     tray   = TrayIcon()
-    window = MainWindow(cfg, worker.camera)
+    window = MainWindow(cfg, worker.camera, worker.recognizer)
 
     if cfg.show_hud_overlay:
         hud.show_hud()

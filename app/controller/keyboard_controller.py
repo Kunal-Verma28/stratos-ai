@@ -1,10 +1,11 @@
 """
-Keyboard Controller — simulates Windows key presses and shortcuts.
-Uses ctypes SendInput for compatibility with all Windows applications.
+STRATOS™ AI — Windows Keyboard Controller & Shortcut Dispatcher
+Uses ctypes SendInput for core keys and keyboard library for complex combos.
 """
 import ctypes
 from ctypes import wintypes
 import time
+import keyboard
 
 from app.utils.logger import logger
 
@@ -29,16 +30,17 @@ VK = {
     "mute":       0xAD,         # VK_VOLUME_MUTE
     "next_track": 0xB0,
     "prev_track": 0xB1,
-    "brightness_up":   None,    # Requires OEM key — handled by system controller
-    "brightness_down": None,
+    "page_up":    0x21,
+    "page_down":  0x22,
+    "left":       0x25,
+    "right":      0x27,
+    "escape":     0x1B,
 }
 
 INPUT_KEYBOARD    = 1
 KEYEVENTF_KEYUP   = 0x0002
-KEYEVENTF_UNICODE = 0x0004
 
 PUL = ctypes.POINTER(ctypes.c_ulong)
-
 
 class KEYBDINPUT(ctypes.Structure):
     _fields_ = [
@@ -60,6 +62,10 @@ class INPUT(ctypes.Structure):
 
 
 class KeyboardController:
+    """
+    High-speed keyboard automation dispatcher.
+    Supports single virtual keys and arbitrary combination strings.
+    """
 
     def _send_key(self, vk: int, flags: int = 0):
         extra = ctypes.c_ulong(0)
@@ -88,8 +94,50 @@ class KeyboardController:
         for vk in reversed(vks):
             self.release(vk)
 
+    def dispatch_custom(self, key_combination: str):
+        """
+        Dispatches arbitrary shortcut strings like 'ctrl+c', 'page_down', 'win+tab', etc.
+        """
+        key_str = key_combination.strip().lower()
+        if not key_str:
+            return
+
+        # Named shortcuts mapping
+        if key_str in ("vol_up", "volume_up"):
+            self.volume_up()
+        elif key_str in ("vol_down", "volume_down"):
+            self.volume_down()
+        elif key_str in ("mute", "mute_toggle"):
+            self.mute_toggle()
+        elif key_str in ("media_play", "play_pause"):
+            self.media_play_pause()
+        elif key_str in ("next_track", "next_slide"):
+            self.next_track()
+        elif key_str in ("prev_track", "prev_slide"):
+            self.prev_track()
+        elif key_str in ("screenshot", "prtsc"):
+            self.screenshot()
+        else:
+            try:
+                keyboard.send(key_str)
+                logger.info(f"Custom shortcut sent: {key_str}")
+            except Exception as e:
+                logger.warning(f"Failed to dispatch custom key '{key_str}': {e}")
+
+    def next_slide(self):
+        self.tap(VK["right"])
+        logger.info("Action: Next Slide (Right Arrow)")
+
+    def prev_slide(self):
+        self.tap(VK["left"])
+        logger.info("Action: Prev Slide (Left Arrow)")
+
+    def blank_screen(self):
+        # In PowerPoint, pressing 'B' toggles black screen
+        keyboard.send("b")
+        logger.info("Action: Toggle Blank Slide Screen")
+
     def screenshot(self):
-        """Send Print Screen key."""
         self.tap(VK["screenshot"])
         logger.info("Action: Screenshot (PrtSc)")
 

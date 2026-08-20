@@ -1,5 +1,5 @@
 """
-SpatialPoint AI™ Pro — Enterprise Real-Time HUD Overlay
+STRATOS™ AI — Enterprise Real-Time HUD Overlay
 Transparent, click-through, always-on-top gesture telemetry status pill.
 """
 from PySide6.QtWidgets import QWidget, QLabel, QApplication
@@ -10,18 +10,24 @@ from app.gestures.gesture_types import GestureState
 
 # Executive color-coded status badges
 GESTURE_INFO: dict[GestureState, tuple[str, str, str]] = {
-    GestureState.IDLE:         ("●  SPATIAL READY",      "#475569", "#0f172a"),
-    GestureState.POINTING:     ("☝  CURSOR ACTIVE",     "#10b981", "#064e3b"),
-    GestureState.LEFT_CLICK:   ("👆 LEFT CLICK",         "#38bdf8", "#0369a1"),
-    GestureState.RIGHT_CLICK:  ("✌  RIGHT CLICK",        "#f59e0b", "#78350f"),
-    GestureState.DOUBLE_CLICK: ("⚡ DOUBLE CLICK",       "#a855f7", "#581c87"),
-    GestureState.DRAG_START:   ("✊ DRAG ENGAGED",       "#ef4444", "#7f1d1d"),
-    GestureState.DRAG_ACTIVE:  ("✊ DRAGGING OBJECT",    "#ef4444", "#7f1d1d"),
-    GestureState.SCROLL_ACTIVE:("↕  PRECISION SCROLL",  "#06b6d4", "#164e63"),
-    GestureState.PEACE_SIGN:   ("✌  SCROLL MODE",        "#06b6d4", "#164e63"),
-    GestureState.FIST:         ("✊ STANDBY HOLD",       "#f97316", "#7c2d12"),
-    GestureState.OPEN_PALM:    ("🖐 SNAPSHOT CAPTURED",  "#10b981", "#064e3b"),
-    GestureState.PAUSED:       ("⏸  STANDBY (PAUSED)",   "#ef4444", "#450a0a"),
+    GestureState.IDLE:          ("●  STRATOS READY",      "#475569", "#0f172a"),
+    GestureState.POINTING:      ("☝  CURSOR ACTIVE",     "#10b981", "#064e3b"),
+    GestureState.LEFT_CLICK:    ("👆 PRIMARY CLICK",      "#38bdf8", "#0369a1"),
+    GestureState.RIGHT_CLICK:   ("✌  CONTEXT CLICK",     "#f59e0b", "#78350f"),
+    GestureState.DOUBLE_CLICK:  ("⚡ DOUBLE CLICK",       "#a855f7", "#581c87"),
+    GestureState.DRAG_START:    ("✊ DRAG ENGAGED",       "#ef4444", "#7f1d1d"),
+    GestureState.DRAG_ACTIVE:   ("✊ DRAGGING OBJECT",    "#ef4444", "#7f1d1d"),
+    GestureState.SCROLL_ACTIVE: ("↕  PRECISION SCROLL",  "#06b6d4", "#164e63"),
+    GestureState.PEACE_SIGN:    ("✌  SCROLL MODE",        "#06b6d4", "#164e63"),
+    GestureState.THREE_FINGERS: ("📋 3-FINGER (COPY)",    "#10b981", "#064e3b"),
+    GestureState.FOUR_FINGERS:  ("📋 4-FINGER (PASTE)",   "#38bdf8", "#0369a1"),
+    GestureState.THUMBS_UP:     ("👍 THUMBS UP",          "#10b981", "#064e3b"),
+    GestureState.THUMBS_DOWN:   ("👎 THUMBS DOWN",        "#f59e0b", "#78350f"),
+    GestureState.SWIPE_LEFT:    ("◀ SWIPE PREVIOUS",     "#a855f7", "#581c87"),
+    GestureState.SWIPE_RIGHT:   ("▶ SWIPE NEXT",         "#a855f7", "#581c87"),
+    GestureState.FIST:          ("✊ STANDBY HOLD",       "#f97316", "#7c2d12"),
+    GestureState.OPEN_PALM:     ("🖐 SNAPSHOT CAPTURED",  "#10b981", "#064e3b"),
+    GestureState.PAUSED:        ("⏸  STANDBY (PAUSED)",   "#ef4444", "#450a0a"),
 }
 
 
@@ -52,12 +58,11 @@ class HUDOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setWindowOpacity(self._opacity)
 
-        # Position: top-right corner with 24px margin
         screen = QApplication.primaryScreen().geometry()
-        self.setGeometry(screen.width() - 250, 24, 230, 48)
+        self.setGeometry(screen.width() - 260, 24, 240, 48)
 
     def _setup_label(self):
-        self._label = QLabel("●  SPATIAL READY", self)
+        self._label = QLabel("●  STRATOS READY", self)
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._label.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
         self._label.setStyleSheet("""
@@ -70,7 +75,7 @@ class HUDOverlay(QWidget):
                 letter-spacing: 0.5px;
             }
         """)
-        self._label.setGeometry(0, 0, 230, 48)
+        self._label.setGeometry(0, 0, 240, 48)
 
     @Slot(GestureState)
     def _on_gesture_update(self, state: GestureState):

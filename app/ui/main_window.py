@@ -1,7 +1,7 @@
 """
-SpatialPoint AI™ Pro — Enterprise Main Dashboard & Calibration Suite
+STRATOS™ AI — Enterprise Main Dashboard & Calibration Suite
 Production Edition v1.0.0-PRO
-Copyright (c) 2026 SpatialPoint Technologies. All rights reserved.
+Copyright (c) 2026 Stratos Technologies. All rights reserved.
 """
 import os
 import cv2
@@ -10,15 +10,15 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QSlider, QCheckBox, QComboBox,
     QGroupBox, QScrollArea, QFrame, QTabWidget, QSizePolicy,
-    QSpinBox, QDoubleSpinBox, QMessageBox, QGridLayout
+    QSpinBox, QDoubleSpinBox, QMessageBox, QGridLayout, QLineEdit, QProgressBar
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap, QFont, QIcon, QColor
 
 from app.config import Config, APP_NAME, APP_VERSION, APP_TAGLINE, APP_ORGANIZATION, APP_COPYRIGHT
 from app.core.camera import CameraManager
+from app.gestures.recognizer import GestureRecognizer
 
-# Enterprise Dark Glassmorphism Theme
 ENTERPRISE_STYLE = """
 QMainWindow, QWidget {
     background-color: #0b0f17;
@@ -76,6 +76,15 @@ QPushButton#danger {
 QPushButton#danger:hover {
     background: #ef4444;
 }
+QPushButton#accent {
+    background: #0284c7;
+    color: #ffffff;
+    border: none;
+    font-weight: 700;
+}
+QPushButton#accent:hover {
+    background: #0369a1;
+}
 QSlider::groove:horizontal {
     height: 6px;
     background: #1e293b;
@@ -108,7 +117,7 @@ QCheckBox::indicator:checked {
     background-color: #10b981;
     border-color: #10b981;
 }
-QComboBox {
+QComboBox, QLineEdit {
     background-color: #1e293b;
     border: 1px solid #334155;
     border-radius: 7px;
@@ -127,7 +136,7 @@ QTabWidget::pane {
 QTabBar::tab {
     background: #111827;
     color: #64748b;
-    padding: 10px 22px;
+    padding: 10px 18px;
     margin-right: 4px;
     border-top-left-radius: 8px;
     border-top-right-radius: 8px;
@@ -142,6 +151,18 @@ QTabBar::tab:hover:!selected {
     background: #1e293b;
     color: #94a3b8;
 }
+QProgressBar {
+    border: 1px solid #334155;
+    border-radius: 6px;
+    text-align: center;
+    background-color: #1e293b;
+    color: white;
+    font-weight: bold;
+}
+QProgressBar::chunk {
+    background-color: #10b981;
+    border-radius: 5px;
+}
 QScrollArea {
     border: none;
     background-color: transparent;
@@ -151,27 +172,34 @@ QScrollArea {
 class MainWindow(QMainWindow):
     """
     Primary settings & control window.
-    Tabs: Vision Workspace | Gesture Matrix | Precision Filters | System Diagnostics
+    Tabs: Vision Workspace | Gesture Matrix | Calibration Wizard | Precision & Hotkeys | System & About
     """
     start_engine   = Signal()
     stop_engine    = Signal()
     config_changed = Signal(Config)
 
-    def __init__(self, cfg: Config, camera: CameraManager):
+    def __init__(self, cfg: Config, camera: CameraManager, recognizer: GestureRecognizer):
         super().__init__()
         self._cfg = cfg
         self._camera = camera
+        self._recognizer = recognizer
         self._engine_running = False
         self._preview_timer = QTimer()
         self._preview_timer.timeout.connect(self._update_preview)
+        
+        # Auto calibration state
+        self._calibrating = False
+        self._calib_samples = []
+        self._calib_timer = QTimer()
+        self._calib_timer.timeout.connect(self._sample_calibration)
+
         self._setup_ui()
 
     def _setup_ui(self):
         self.setWindowTitle(f"{APP_NAME} — {APP_TAGLINE}")
-        self.setMinimumSize(960, 680)
+        self.setMinimumSize(980, 720)
         self.setStyleSheet(ENTERPRISE_STYLE)
 
-        # Set application window icon if available
         icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets", "app_icon.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
@@ -180,7 +208,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
         root.setContentsMargins(20, 20, 20, 20)
-        root.setSpacing(16)
+        root.setSpacing(14)
 
         # ── Professional Header ───────────────────────────────────────────────
         header = QHBoxLayout()
@@ -212,6 +240,19 @@ class MainWindow(QMainWindow):
         title_box.addWidget(tagline)
         header.addLayout(title_box)
         header.addStretch()
+
+        # Mode Selector Pill
+        mode_box = QHBoxLayout()
+        mode_lbl = QLabel("Profile Mode:")
+        mode_lbl.setStyleSheet("font-weight: bold; color: #94a3b8;")
+        mode_box.addWidget(mode_lbl)
+
+        self._mode_combo = QComboBox()
+        self._mode_combo.addItems(["Desktop Navigation", "Presentation Remote", "Media Controller"])
+        self._mode_combo.setCurrentText(self._cfg.operation_mode)
+        self._mode_combo.currentTextChanged.connect(self._on_mode_change)
+        mode_box.addWidget(self._mode_combo)
+        header.addLayout(mode_box)
 
         # Engine Status Pill
         self._status_pill = QLabel("● ENGINE OFFLINE")
@@ -251,7 +292,8 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         tabs.addTab(self._build_preview_tab(),     "📷  Vision Workspace")
         tabs.addTab(self._build_gestures_tab(),    "🖐  Gesture Matrix")
-        tabs.addTab(self._build_sensitivity_tab(), "⚡  Precision & Filters")
+        tabs.addTab(self._build_calibration_tab(), "🎯  Calibration Wizard")
+        tabs.addTab(self._build_sensitivity_tab(), "⚡  Precision & Shortcuts")
         tabs.addTab(self._build_about_tab(),       "ℹ  System & About")
         root.addWidget(tabs)
 
@@ -263,7 +305,6 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(12)
 
-        # Video Preview Viewport
         self._cam_label = QLabel("Camera feed viewport — Click 'Start Tracking Engine' to activate")
         self._cam_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cam_label.setStyleSheet("""
@@ -276,7 +317,6 @@ class MainWindow(QMainWindow):
         self._cam_label.setMinimumHeight(380)
         layout.addWidget(self._cam_label)
 
-        # Hardware Selector & Settings Row
         opts_row = QHBoxLayout()
         opts_row.setSpacing(16)
 
@@ -307,7 +347,7 @@ class MainWindow(QMainWindow):
         opts_row.addStretch()
         layout.addLayout(opts_row)
 
-        info_bar = QLabel("⚡ Active Workspace Zone: Position your hand inside the green bounded rectangle for full desktop reach.")
+        info_bar = QLabel("⚡ Active Workspace Zone: Keep your hand inside the green bounded rectangle for complete desktop reach.")
         info_bar.setStyleSheet("color: #64748b; font-size: 12px;")
         layout.addWidget(info_bar)
         return w
@@ -323,13 +363,15 @@ class MainWindow(QMainWindow):
         layout.setSpacing(14)
 
         gestures = [
-            ("gesture_left_click",   "👆 Left Click",         "Index + Thumb Pinch",           "Performs primary mouse click with anti-drift coordinate freeze."),
-            ("gesture_right_click",  "✌ Right Click",        "Middle + Thumb Pinch",          "Opens context menu while index remains extended."),
-            ("gesture_double_click", "⚡ Rapid Double Click", "2 Consecutive Pinches",         "Fast folder, app, or link execution within 350ms window."),
-            ("gesture_drag",         "✊ Drag & Hold",        "Pinch held > 350ms",            "Window dragging, text selection, and object placement."),
+            ("gesture_left_click",   "👆 Left Click",         "Index + Thumb Pinch",           "Primary click with 120ms anti-drift coordinate freeze."),
+            ("gesture_right_click",  "✌ Right Click",        "Middle + Thumb Pinch",          "Opens context menu while index finger is up."),
+            ("gesture_double_click", "⚡ Double Click",       "2 Consecutive Pinches",         "Fast double-click within 350ms window."),
+            ("gesture_drag",         "✊ Drag & Hold",        "Pinch held > 350ms",            "Window dragging, object selection, and text highlighting."),
             ("gesture_scroll",       "↕ Precision Scroll",   "Index + Middle Parallel Rise",   "Fluid vertical web and document scrolling."),
-            ("gesture_screenshot",   "🖐 Instant Screenshot", "Open Palm (5 Extended Fingers)","Dispatches PrtSc snapshot with 500ms safety cooldown."),
-            ("gesture_media",        "🎵 Media Hotkeys",      "Fist & Custom Triggers",        "Simulates Play/Pause and track advancement keys."),
+            ("gesture_three_four_fingers", "📋 3/4-Finger Shortcuts", "3 or 4 Extended Fingers", "Dispatches Copy (3 fingers) and Paste (4 fingers)."),
+            ("gesture_thumbs",       "👍/👎 Thumbs Up/Down", "Thumb vertical pose",          "Volume up/down or Next/Prev slide."),
+            ("gesture_swipes",       "◀/▶ Hand Swipes",       "Fast horizontal movement",      "Next / Previous track or slide advancement."),
+            ("gesture_screenshot",   "🖐 Instant Snapshot", "Open Palm (5 Extended Fingers)","Dispatches PrtSc snapshot with 500ms safety cooldown."),
         ]
 
         grp = QGroupBox("Active Gesture Recognition Mapping")
@@ -351,7 +393,7 @@ class MainWindow(QMainWindow):
 
             cb = QCheckBox(label)
             cb.setStyleSheet("font-weight: 700; color: #f8fafc;")
-            cb.setChecked(getattr(self._cfg, key))
+            cb.setChecked(getattr(self._cfg, key, True))
             cb.stateChanged.connect(lambda v, k=key: self._toggle_gesture(k, bool(v)))
             card_layout.addWidget(cb, 2)
 
@@ -374,31 +416,103 @@ class MainWindow(QMainWindow):
             grp_layout.addWidget(card)
 
         layout.addWidget(grp)
-
-        # Global Hotkey Safeguards
-        hotkey_grp = QGroupBox("Safety Hotkeys & Emergency Standby")
-        hk_layout = QGridLayout(hotkey_grp)
-        hk_layout.addWidget(QLabel("Global Standby Toggle:"), 0, 0)
-        hk_layout.addWidget(QLabel("<b>F8</b>  <i>(Freezes/resumes tracking instantly)</i>"), 0, 1)
-        hk_layout.addWidget(QLabel("Physical Gesture Standby:"), 1, 0)
-        hk_layout.addWidget(QLabel("<b>Closed Fist</b>  <i>(Hold 1.0 second)</i>"), 1, 1)
-        hk_layout.addWidget(QLabel("Emergency Application Exit:"), 2, 0)
-        hk_layout.addWidget(QLabel("<b>Ctrl + Shift + Q</b>"), 2, 1)
-        layout.addWidget(hotkey_grp)
-
         layout.addStretch()
         scroll.setWidget(w)
         return scroll
 
-    # ── Tab 3: Precision & Dynamic Filters ─────────────────────────────────────
+    # ── Tab 3: Interactive Calibration Wizard ─────────────────────────────────
 
-    def _build_sensitivity_tab(self) -> QWidget:
+    def _build_calibration_tab(self) -> QWidget:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
         w = QWidget()
         layout = QVBoxLayout(w)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(14)
 
-        # Cursor Kinetics
+        # 1. Live Proximity Gauge
+        meter_grp = QGroupBox("Live Hand Biometric Telemetry")
+        meter_layout = QVBoxLayout(meter_grp)
+        meter_layout.setSpacing(10)
+
+        meter_layout.addWidget(QLabel("Live Index-Thumb Pinch Distance Meter:"))
+        self._pinch_meter = QProgressBar()
+        self._pinch_meter.setRange(0, 150)
+        self._pinch_meter.setValue(50)
+        self._pinch_meter.setFormat("Distance: %v / 1000")
+        meter_layout.addWidget(self._pinch_meter)
+
+        self._meter_hint = QLabel("💡 Bring your thumb and index finger together in front of the camera to see the gauge move.")
+        self._meter_hint.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        meter_layout.addWidget(self._meter_hint)
+        layout.addWidget(meter_grp)
+
+        # 2. Automated Calibration Wizard
+        auto_grp = QGroupBox("Personal Hand Size Auto-Calibration")
+        auto_layout = QVBoxLayout(auto_grp)
+        auto_layout.setSpacing(10)
+
+        auto_layout.addWidget(QLabel("STRATOS can automatically calibrate the click threshold tailored to your hand size:"))
+        
+        self._calib_btn = QPushButton("🎯  Start 5-Second Pinch Calibration")
+        self._calib_btn.setObjectName("accent")
+        self._calib_btn.setMinimumHeight(42)
+        self._calib_btn.clicked.connect(self._start_auto_calibration)
+        auto_layout.addWidget(self._calib_btn)
+
+        self._calib_status = QLabel("Status: Ready to calibrate. Ensure camera tracking is running.")
+        self._calib_status.setStyleSheet("color: #38bdf8; font-weight: 600;")
+        auto_layout.addWidget(self._calib_status)
+        layout.addWidget(auto_grp)
+
+        # 3. Active Space Geometry Tuning
+        zone_grp = QGroupBox("Spatial Active Workspace Bounds")
+        zone_layout = QGridLayout(zone_grp)
+
+        zone_layout.addWidget(QLabel("Left Margin (%):"), 0, 0)
+        self._zl_spin = QSpinBox()
+        self._zl_spin.setRange(0, 40)
+        self._zl_spin.setValue(int(self._cfg.zone_left * 100))
+        self._zl_spin.valueChanged.connect(lambda v: self._update_zone("zone_left", v/100))
+        zone_layout.addWidget(self._zl_spin, 0, 1)
+
+        zone_layout.addWidget(QLabel("Right Margin (%):"), 0, 2)
+        self._zr_spin = QSpinBox()
+        self._zr_spin.setRange(60, 100)
+        self._zr_spin.setValue(int(self._cfg.zone_right * 100))
+        self._zr_spin.valueChanged.connect(lambda v: self._update_zone("zone_right", v/100))
+        zone_layout.addWidget(self._zr_spin, 0, 3)
+
+        zone_layout.addWidget(QLabel("Top Margin (%):"), 1, 0)
+        self._zt_spin = QSpinBox()
+        self._zt_spin.setRange(0, 40)
+        self._zt_spin.setValue(int(self._cfg.zone_top * 100))
+        self._zt_spin.valueChanged.connect(lambda v: self._update_zone("zone_top", v/100))
+        zone_layout.addWidget(self._zt_spin, 1, 1)
+
+        zone_layout.addWidget(QLabel("Bottom Margin (%):"), 1, 2)
+        self._zb_spin = QSpinBox()
+        self._zb_spin.setRange(60, 100)
+        self._zb_spin.setValue(int(self._cfg.zone_bottom * 100))
+        self._zb_spin.valueChanged.connect(lambda v: self._update_zone("zone_bottom", v/100))
+        zone_layout.addWidget(self._zb_spin, 1, 3)
+
+        layout.addWidget(zone_grp)
+        layout.addStretch()
+        scroll.setWidget(w)
+        return scroll
+
+    # ── Tab 4: Precision & Custom Hotkeys ─────────────────────────────────────
+
+    def _build_sensitivity_tab(self) -> QWidget:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(14)
+
+        # Kinetics
         kin_grp = QGroupBox("Cursor Kinetics & Acceleration")
         kin_layout = QVBoxLayout(kin_grp)
 
@@ -435,37 +549,53 @@ class MainWindow(QMainWindow):
         kin_layout.addLayout(row2)
         layout.addWidget(kin_grp)
 
-        # Pinch Biometrics
-        bio_grp = QGroupBox("Pinch Biometric Activation")
-        bio_layout = QVBoxLayout(bio_grp)
-        bio_layout.addWidget(QLabel("Pinch Activation Proximity (Normalized Distance Threshold):"))
-        self._pinch_slider = QSlider(Qt.Orientation.Horizontal)
-        self._pinch_slider.setRange(20, 120)
-        self._pinch_slider.setValue(int(self._cfg.pinch_threshold * 1000))
-        self._pinch_label = QLabel(f"{self._cfg.pinch_threshold:.3f}")
-        self._pinch_label.setStyleSheet("color: #10b981; font-weight: bold; min-width: 45px;")
-        self._pinch_slider.valueChanged.connect(
-            lambda v: (setattr(self._cfg, "pinch_threshold", v/1000),
-                       self._pinch_label.setText(f"{v/1000:.3f}"),
-                       self.config_changed.emit(self._cfg))
-        )
-        row3 = QHBoxLayout()
-        row3.addWidget(self._pinch_slider)
-        row3.addWidget(self._pinch_label)
-        bio_layout.addLayout(row3)
-        layout.addWidget(bio_grp)
+        # Custom Keybindings Matrix
+        hk_grp = QGroupBox("Custom Gesture-to-Hotkey Keybindings")
+        hk_layout = QGridLayout(hk_grp)
 
-        # Save Action Button
+        hk_layout.addWidget(QLabel("3 Fingers Pose Key:"), 0, 0)
+        self._hk_3f = QLineEdit(self._cfg.custom_three_fingers)
+        self._hk_3f.textChanged.connect(lambda t: setattr(self._cfg, "custom_three_fingers", t))
+        hk_layout.addWidget(self._hk_3f, 0, 1)
+
+        hk_layout.addWidget(QLabel("4 Fingers Pose Key:"), 0, 2)
+        self._hk_4f = QLineEdit(self._cfg.custom_four_fingers)
+        self._hk_4f.textChanged.connect(lambda t: setattr(self._cfg, "custom_four_fingers", t))
+        hk_layout.addWidget(self._hk_4f, 0, 3)
+
+        hk_layout.addWidget(QLabel("Thumbs Up Action/Key:"), 1, 0)
+        self._hk_tu = QLineEdit(self._cfg.custom_thumbs_up)
+        self._hk_tu.textChanged.connect(lambda t: setattr(self._cfg, "custom_thumbs_up", t))
+        hk_layout.addWidget(self._hk_tu, 1, 1)
+
+        hk_layout.addWidget(QLabel("Thumbs Down Action/Key:"), 1, 2)
+        self._hk_td = QLineEdit(self._cfg.custom_thumbs_down)
+        self._hk_td.textChanged.connect(lambda t: setattr(self._cfg, "custom_thumbs_down", t))
+        hk_layout.addWidget(self._hk_td, 1, 3)
+
+        hk_layout.addWidget(QLabel("Swipe Left Action/Key:"), 2, 0)
+        self._hk_sl = QLineEdit(self._cfg.custom_swipe_left)
+        self._hk_sl.textChanged.connect(lambda t: setattr(self._cfg, "custom_swipe_left", t))
+        hk_layout.addWidget(self._hk_sl, 2, 1)
+
+        hk_layout.addWidget(QLabel("Swipe Right Action/Key:"), 2, 2)
+        self._hk_sr = QLineEdit(self._cfg.custom_swipe_right)
+        self._hk_sr.textChanged.connect(lambda t: setattr(self._cfg, "custom_swipe_right", t))
+        hk_layout.addWidget(self._hk_sr, 2, 3)
+
+        layout.addWidget(hk_grp)
+
         save_btn = QPushButton("💾  Save Enterprise Profile")
         save_btn.setObjectName("primary")
-        save_btn.setMinimumHeight(40)
-        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        save_btn.setMinimumHeight(42)
         save_btn.clicked.connect(self._save_settings)
         layout.addWidget(save_btn)
-        layout.addStretch()
-        return w
 
-    # ── Tab 4: System & About ─────────────────────────────────────────────────
+        layout.addStretch()
+        scroll.setWidget(w)
+        return scroll
+
+    # ── Tab 5: System & About ─────────────────────────────────────────────────
 
     def _build_about_tab(self) -> QWidget:
         w = QWidget()
@@ -530,6 +660,10 @@ class MainWindow(QMainWindow):
         self._preview_timer.stop()
         self.stop_engine.emit()
 
+    def _on_mode_change(self, mode: str):
+        self._cfg.operation_mode = mode
+        self.config_changed.emit(self._cfg)
+
     def _on_camera_change(self, idx: int):
         self._cfg.camera_index = idx
         self.config_changed.emit(self._cfg)
@@ -542,13 +676,53 @@ class MainWindow(QMainWindow):
         setattr(self._cfg, key, val)
         self.config_changed.emit(self._cfg)
 
+    def _update_zone(self, key: str, val: float):
+        setattr(self._cfg, key, val)
+        self.config_changed.emit(self._cfg)
+
+    def _start_auto_calibration(self):
+        if not self._engine_running:
+            QMessageBox.warning(self, "Engine Inactive", "Please click 'Start Tracking Engine' first to activate the camera.")
+            return
+        self._calibrating = True
+        self._calib_samples = []
+        self._calib_btn.setEnabled(False)
+        self._calib_status.setText("⏳ Pinch your thumb and index finger firmly 3 times now...")
+        self._calib_timer.start(100) # sample every 100ms for 5 seconds
+
+    def _sample_calibration(self):
+        d = self._recognizer.last_pinch_distance
+        if d > 0.005:
+            self._calib_samples.append(d)
+        
+        if len(self._calib_samples) >= 50: # 5 seconds
+            self._calib_timer.stop()
+            self._calibrating = False
+            self._calib_btn.setEnabled(True)
+            if self._calib_samples:
+                # Find the 10th percentile lowest distances during pinches
+                sorted_samples = sorted(self._calib_samples)
+                min_pinch = np.percentile(sorted_samples[:15], 50)
+                calibrated_thresh = round(float(min_pinch * 1.25), 3) # add 25% safety margin
+                calibrated_thresh = max(0.035, min(0.090, calibrated_thresh))
+                self._cfg.pinch_threshold = calibrated_thresh
+                self._cfg.right_click_threshold = calibrated_thresh
+                self.config_changed.emit(self._cfg)
+                self._calib_status.setText(f"✅ Calibrated successfully! Threshold set to {calibrated_thresh:.3f}")
+                QMessageBox.information(self, "Calibration Complete", f"Personal hand calibration complete!\nOptimal Pinch Threshold: {calibrated_thresh:.3f}")
+            else:
+                self._calib_status.setText("⚠️ No hand detected during calibration. Try again.")
+
     def _save_settings(self):
         self._cfg.save()
         QMessageBox.information(self, "Profile Saved", "Enterprise settings profile successfully updated.")
 
     @Slot()
     def _update_preview(self):
-        """Grab latest camera frame and display in viewport."""
+        # Update live distance meter
+        dist = self._recognizer.last_pinch_distance
+        self._pinch_meter.setValue(min(150, int(dist * 1000)))
+
         frame = self._camera.frame
         if frame is None:
             return
@@ -559,8 +733,8 @@ class MainWindow(QMainWindow):
         x2 = int(cfg.zone_right  * w)
         y2 = int(cfg.zone_bottom * h)
         cv2.rectangle(frame, (x1, y1), (x2, y2), (16, 185, 129), 2)
-        cv2.putText(frame, "SPATIAL ACTIVE ZONE", (x1 + 6, y1 - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (16, 185, 129), 1)
+        cv2.putText(frame, f"SPATIAL ACTIVE ZONE [{cfg.operation_mode}]", (x1 + 6, y1 - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (16, 185, 129), 1)
 
         rgb = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
         h2, w2, ch = rgb.shape

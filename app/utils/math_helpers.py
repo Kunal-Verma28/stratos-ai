@@ -76,29 +76,51 @@ def finger_extended(lms: list[np.ndarray], tip: int, pip: int, mcp: int) -> bool
     Return True if a finger is extended (tip is farther from wrist than pip).
     Uses Y-axis: smaller Y = higher on screen = farther from wrist in selfie view.
     """
-    # tip above pip above mcp (in normalized image coords, y decreases upward)
     return lms[tip][1] < lms[pip][1] < lms[mcp][1]
 
 
 def thumb_extended(lms: list[np.ndarray]) -> bool:
-    """Return True if thumb tip is far from index MCP (simple heuristic)."""
+    """Return True if thumb tip is far from index MCP."""
     return euclidean_2d(lms[LM.THUMB_TIP], lms[LM.INDEX_MCP]) > \
-           euclidean_2d(lms[LM.THUMB_IP],  lms[LM.INDEX_MCP])
+           euclidean_2d(lms[LM.THUMB_IP],  lms[LM.INDEX_MCP]) * 1.15
+
+
+def thumb_vertical_direction(lms: list[np.ndarray]) -> str:
+    """
+    Check if thumb is pointing UP, DOWN, or NEUTRAL.
+    """
+    tip_y = lms[LM.THUMB_TIP][1]
+    mcp_y = lms[LM.THUMB_MCP][1]
+    wrist_y = lms[LM.WRIST][1]
+
+    # In image coordinates, y=0 is top. So tip_y < mcp_y means thumb tip is above MCP
+    if tip_y < mcp_y - 0.04 and tip_y < wrist_y - 0.06:
+        return "up"
+    elif tip_y > mcp_y + 0.04 and tip_y > wrist_y:
+        return "down"
+    return "neutral"
+
+
+def get_finger_states(lms: list[np.ndarray]) -> tuple[bool, bool, bool, bool, bool]:
+    """
+    Returns (thumb, index, middle, ring, pinky) boolean extended states.
+    """
+    t = thumb_extended(lms)
+    i = finger_extended(lms, LM.INDEX_TIP,  LM.INDEX_PIP,  LM.INDEX_MCP)
+    m = finger_extended(lms, LM.MIDDLE_TIP, LM.MIDDLE_PIP, LM.MIDDLE_MCP)
+    r = finger_extended(lms, LM.RING_TIP,   LM.RING_PIP,   LM.RING_MCP)
+    p = finger_extended(lms, LM.PINKY_TIP,  LM.PINKY_PIP,  LM.PINKY_MCP)
+    return (t, i, m, r, p)
 
 
 def count_extended_fingers(lms: list[np.ndarray]) -> int:
     """Return number of fingers currently extended (0-5)."""
-    fingers = [
-        finger_extended(lms, LM.INDEX_TIP,  LM.INDEX_PIP,  LM.INDEX_MCP),
-        finger_extended(lms, LM.MIDDLE_TIP, LM.MIDDLE_PIP, LM.MIDDLE_MCP),
-        finger_extended(lms, LM.RING_TIP,   LM.RING_PIP,   LM.RING_MCP),
-        finger_extended(lms, LM.PINKY_TIP,  LM.PINKY_PIP,  LM.PINKY_MCP),
-    ]
-    return int(thumb_extended(lms)) + sum(fingers)
+    states = get_finger_states(lms)
+    return sum(states)
 
 
 def palm_center(lms: list[np.ndarray]) -> np.ndarray:
-    """Average of palm landmarks (rough center of palm)."""
+    """Average of palm landmarks (center of palm)."""
     palm_ids = [LM.WRIST, LM.INDEX_MCP, LM.MIDDLE_MCP, LM.RING_MCP, LM.PINKY_MCP]
     pts = np.stack([lms[i] for i in palm_ids])
     return pts.mean(axis=0)
