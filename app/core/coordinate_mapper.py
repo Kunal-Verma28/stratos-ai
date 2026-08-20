@@ -2,9 +2,9 @@
 Coordinate Mapper — maps hand landmark positions inside the Active Control Zone
 to full-screen pixel coordinates.
 
-The "Active Zone" is a sub-rectangle of the camera frame where the user positions
-their hand. This prevents the need to move the hand to extreme frame edges,
-reducing fatigue while still covering the full screen.
+The "Active Zone" is a centered sub-rectangle of the camera frame.
+Moving the hand within this compact area maps to 100% of the PC screen,
+so the user's hand NEVER leaves the camera frame.
 """
 import ctypes
 from app.config import Config
@@ -34,29 +34,25 @@ class CoordinateMapper:
     def map(self, nx: float, ny: float) -> tuple[int, int]:
         """
         Convert normalized (0..1) camera x, y to screen pixel coordinates.
-
-        nx, ny — normalized landmark coordinates from MediaPipe (0=left/top, 1=right/bottom).
-        The mapping clips to the active zone and stretches it across the full screen.
+        Maps the compact active zone across the entire desktop resolution.
         """
         cfg = self._cfg
 
-        # Clamp to active zone
-        zx = max(cfg.zone_left, min(cfg.zone_right,  nx))
-        zy = max(cfg.zone_top,  min(cfg.zone_bottom, ny))
+        # Relative progress inside the active box: 0.0 (left/top) to 1.0 (right/bottom)
+        zone_w = max(cfg.zone_right - cfg.zone_left, 0.20)
+        zone_h = max(cfg.zone_bottom - cfg.zone_top, 0.20)
 
-        # Map zone range → [0, 1]
-        zone_w = max(cfg.zone_right  - cfg.zone_left, 1e-6)
-        zone_h = max(cfg.zone_bottom - cfg.zone_top,  1e-6)
-        rel_x = (zx - cfg.zone_left) / zone_w
-        rel_y = (zy - cfg.zone_top)  / zone_h
+        rel_x = (nx - cfg.zone_left) / zone_w
+        rel_y = (ny - cfg.zone_top)  / zone_h
 
-        # Apply sensitivity (centered around 0.5)
+        # Apply Sensitivity centered at 0.5 (center of box = center of screen)
         sx = 0.5 + (rel_x - 0.5) * cfg.cursor_sensitivity
         sy = 0.5 + (rel_y - 0.5) * cfg.cursor_sensitivity
+
+        # Clamp cleanly to screen bounds
         sx = max(0.0, min(1.0, sx))
         sy = max(0.0, min(1.0, sy))
 
-        # Scale to screen
         px = int(sx * self._screen_w)
         py = int(sy * self._screen_h)
         return px, py
